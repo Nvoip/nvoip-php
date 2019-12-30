@@ -10,5 +10,5 @@ Scripts e bibliotecas para a linguagem PHP para uso com a API da Nvoip.
 PHP language scripts and libraries for use with the Nvoip API.
 
 ## Instructions
-To use the scripts, you must have a valid Nvoip account and token. You can create your account for free at https://www.nvoip.com.br
+- To use the scripts, you must have a valid Nvoip account and token. You can create your account for free at https://www.nvoip.com.br
 - Feel free to create and contribute code from this repository. Also feel free to report bugs related to the use of the API with the PHP language.
