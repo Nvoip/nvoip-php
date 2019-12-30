@@ -25,9 +25,9 @@ PHP language scripts and libraries for use with the Nvoip API.
 
 ## Scripts by Nvoip:
 ### SMS Trigger - sender-sms.php
-This script allows you to send SMS in 2 ways:
-1. Copying the code to your site and changing the $ mobile, $ token_auth and $ msg variables.
+This script allows you to send SMS with 2 methods:
+1. Copying the code to your site and changing the $mobile, $token_auth and $msg variables.
 
 2. Using as a mini server for HTTP requests.
 In this case, you will pass the parameters as follows:
-https: // {urldoseusite / sender-sms.php} /? auth_token = {token} & mobile = {mobile} & msg = {msg}
+https://{urldoseusite/sender-sms.php}/?auth_token={token}&mobile={mobile}&msg={msg}
