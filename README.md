@@ -7,7 +7,7 @@ Scripts e bibliotecas para a linguagem PHP para uso com a API da Nvoip.
 - Acesse https://www.nvoip.com.br/api para acessar a documentação da nossa API.
 
 ## Scripts by Nvoip:
-# Disparo de SMS - sender-sms.php
+### Disparo de SMS - sender-sms.php
 Este script permite você enviar SMS de 2 formas:
 1. Copiando o código para o seu site e alterando as variáveis $celular, $token_auth e $msg.
 
@@ -24,7 +24,7 @@ PHP language scripts and libraries for use with the Nvoip API.
 - Visit https://www.nvoip.com.br/api to access our API documentation.
 
 ## Scripts by Nvoip:
-# SMS Trigger - sender-sms.php
+### SMS Trigger - sender-sms.php
 This script allows you to send SMS in 2 ways:
 1. Copying the code to your site and changing the $ mobile, $ token_auth and $ msg variables.
 
