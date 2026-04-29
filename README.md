@@ -28,12 +28,6 @@ export NVOIP_OAUTH_CLIENT_ID="seu_client_id"
 export NVOIP_OAUTH_CLIENT_SECRET="seu_client_secret"
 ```
 
-Se a sua operacao ja armazena o header serializado, voce tambem pode enviar:
-
-```bash
-export NVOIP_OAUTH_BASIC_AUTH="basic_auth_base64"
-```
-
 ## Exemplos
 
 - `php examples/create-access-token.php`

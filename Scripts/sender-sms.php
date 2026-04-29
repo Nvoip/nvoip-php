@@ -10,7 +10,6 @@ $numbersip = $_GET['numbersip'] ?? getenv('NVOIP_NUMBERSIP') ?: '';
 $userToken = $_GET['user_token'] ?? getenv('NVOIP_USER_TOKEN') ?: '';
 $numberPhone = $_GET['numberPhone'] ?? $_GET['celular'] ?? '';
 $message = $_GET['message'] ?? $_GET['msg'] ?? '';
-$oauthBasicAuth = $_GET['oauth_basic_auth'] ?? getenv('NVOIP_OAUTH_BASIC_AUTH') ?: null;
 $oauthClientId = $_GET['oauth_client_id'] ?? getenv('NVOIP_OAUTH_CLIENT_ID') ?: null;
 $oauthClientSecret = $_GET['oauth_client_secret'] ?? getenv('NVOIP_OAUTH_CLIENT_SECRET') ?: null;
 
@@ -29,7 +28,6 @@ if ($numbersip === '' || $userToken === '' || $numberPhone === '' || $message ==
 
 $client = new NvoipClient(
     getenv('NVOIP_BASE_URL') ?: 'https://api.nvoip.com.br/v2',
-    $oauthBasicAuth,
     $oauthClientId,
     $oauthClientSecret
 );

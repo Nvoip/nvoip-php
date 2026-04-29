@@ -10,7 +10,6 @@ final class NvoipClient
 {
     public function __construct(
         private readonly string $baseUrl = 'https://api.nvoip.com.br/v2',
-        private readonly ?string $oauthBasicAuth = null,
         private readonly ?string $oauthClientId = null,
         private readonly ?string $oauthClientSecret = null
     ) {
@@ -153,10 +152,6 @@ final class NvoipClient
 
     private function resolveBasicAuth(): string
     {
-        if ($this->oauthBasicAuth !== null && $this->oauthBasicAuth !== '') {
-            return $this->oauthBasicAuth;
-        }
-
         if (
             $this->oauthClientId !== null && $this->oauthClientId !== '' &&
             $this->oauthClientSecret !== null && $this->oauthClientSecret !== ''
@@ -165,7 +160,7 @@ final class NvoipClient
         }
 
         throw new RuntimeException(
-            'Missing OAuth client credentials. Configure oauthBasicAuth or oauthClientId + oauthClientSecret.'
+            'Missing OAuth client credentials. Configure oauthClientId + oauthClientSecret.'
         );
     }
 

@@ -8,7 +8,6 @@ use Nvoip\NvoipClient;
 
 $client = new NvoipClient(
     getenv('NVOIP_BASE_URL') ?: 'https://api.nvoip.com.br/v2',
-    getenv('NVOIP_OAUTH_BASIC_AUTH') ?: null,
     getenv('NVOIP_OAUTH_CLIENT_ID') ?: null,
     getenv('NVOIP_OAUTH_CLIENT_SECRET') ?: null
 );
