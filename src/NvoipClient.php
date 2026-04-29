@@ -8,11 +8,17 @@ use RuntimeException;
 
 final class NvoipClient
 {
-    private const BASIC_AUTH = 'TnZvaXBBcGlWMjpUblp2YVhCQmNHbFdNakl3TWpFPQ==';
-
     public function __construct(
-        private readonly string $baseUrl = 'https://api.nvoip.com.br/v2'
+        private readonly string $baseUrl = 'https://api.nvoip.com.br/v2',
+        private readonly ?string $oauthBasicAuth = null,
+        private readonly ?string $oauthClientId = null,
+        private readonly ?string $oauthClientSecret = null
     ) {
+    }
+
+    public static function encodeBasicAuth(string $clientId, string $clientSecret): string
+    {
+        return base64_encode($clientId . ':' . $clientSecret);
     }
 
     public function createAccessToken(string $numbersip, string $userToken): array
@@ -22,7 +28,7 @@ final class NvoipClient
             '/oauth/token',
             [
                 'Content-Type: application/x-www-form-urlencoded',
-                'Authorization: Basic ' . self::BASIC_AUTH,
+                'Authorization: Basic ' . $this->resolveBasicAuth(),
             ],
             http_build_query(
                 [
@@ -41,7 +47,7 @@ final class NvoipClient
             '/oauth/token',
             [
                 'Content-Type: application/x-www-form-urlencoded',
-                'Authorization: Basic ' . self::BASIC_AUTH,
+                'Authorization: Basic ' . $this->resolveBasicAuth(),
             ],
             http_build_query(
                 [
@@ -120,6 +126,15 @@ final class NvoipClient
         return $this->jsonRequest('POST', '/otp', $payload, $accessToken, $napikey);
     }
 
+    public function checkOtp(string $code, string $key): array
+    {
+        return $this->request(
+            'GET',
+            '/check/otp?code=' . rawurlencode($code) . '&key=' . rawurlencode($key),
+            []
+        );
+    }
+
     public function listWhatsAppTemplates(string $accessToken): array
     {
         return $this->request(
@@ -134,6 +149,24 @@ final class NvoipClient
     public function sendWhatsAppTemplate(array $payload, string $accessToken): array
     {
         return $this->jsonRequest('POST', '/wa/sendTemplates', $payload, $accessToken);
+    }
+
+    private function resolveBasicAuth(): string
+    {
+        if ($this->oauthBasicAuth !== null && $this->oauthBasicAuth !== '') {
+            return $this->oauthBasicAuth;
+        }
+
+        if (
+            $this->oauthClientId !== null && $this->oauthClientId !== '' &&
+            $this->oauthClientSecret !== null && $this->oauthClientSecret !== ''
+        ) {
+            return self::encodeBasicAuth($this->oauthClientId, $this->oauthClientSecret);
+        }
+
+        throw new RuntimeException(
+            'Missing OAuth client credentials. Configure oauthBasicAuth or oauthClientId + oauthClientSecret.'
+        );
     }
 
     private function jsonRequest(
