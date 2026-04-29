@@ -1,11 +1,11 @@
 # nvoip-php
 
-Cliente PHP simples para a API v2 da Nvoip, com foco em exemplos prontos para integracoes de voz, SMS, OTP e WhatsApp.
+Cliente PHP simples para a API v2 da Nvoip, com foco nos fluxos principais de autenticacao, ligacoes, OTP e WhatsApp.
 
 ## O que tem aqui
 
 - `src/NvoipClient.php`: cliente leve para a API v2
-- `examples/send-sms.php`: exemplo minimo de envio de SMS
+- `examples/`: exemplos separados por fluxo principal
 - `Scripts/sender-sms.php`: endpoint PHP simples para disparo de SMS via query string
 
 ## Requisitos
@@ -13,7 +13,7 @@ Cliente PHP simples para a API v2 da Nvoip, com foco em exemplos prontos para in
 - PHP 8.0+
 - extensao `curl`
 
-## Credenciais necessarias
+## Configuracao
 
 No painel da Nvoip, em `API`, voce encontra:
 
@@ -21,31 +21,28 @@ No painel da Nvoip, em `API`, voce encontra:
 - `user-token`
 - `napikey`
 
-Para integracoes comerciais, prefira OAuth.
-
-## Instalacao
+Tambem configure um destes formatos:
 
 ```bash
-composer dump-autoload
-cp .env.example .env
+export NVOIP_OAUTH_CLIENT_ID="seu_client_id"
+export NVOIP_OAUTH_CLIENT_SECRET="seu_client_secret"
 ```
 
-## Uso rapido
-
-Defina as variaveis:
+Se a sua operacao ja armazena o header serializado, voce tambem pode enviar:
 
 ```bash
-export NVOIP_NUMBERSIP="seu_numbersip"
-export NVOIP_USER_TOKEN="seu_user_token"
-export NVOIP_TARGET_NUMBER="11999999999"
-export NVOIP_SMS_MESSAGE="Mensagem de teste Nvoip"
+export NVOIP_OAUTH_BASIC_AUTH="basic_auth_base64"
 ```
 
-Rode o exemplo:
+## Exemplos
 
-```bash
-php examples/send-sms.php
-```
+- `php examples/create-access-token.php`
+- `php examples/send-sms.php`
+- `php examples/create-call.php`
+- `php examples/send-otp.php`
+- `php examples/check-otp.php`
+- `php examples/list-whatsapp-templates.php`
+- `php examples/send-whatsapp-template.php`
 
 ## Mini endpoint HTTP
 
@@ -57,17 +54,9 @@ Exemplo:
 https://seusite.exemplo/Scripts/sender-sms.php?numbersip=SEU_NUMBERSIP&user_token=SEU_USER_TOKEN&numberPhone=11999999999&message=Mensagem%20de%20teste
 ```
 
-## Operacoes cobertas pelo cliente
+## SDK web
 
-- gerar `access_token`
-- renovar `access_token`
-- consultar saldo
-- enviar SMS
-- realizar chamada
-- consultar chamada
-- enviar OTP
-- listar templates de WhatsApp
-- enviar template de WhatsApp
+Para o fluxo de popup com telefone e codigo, use o repositório `nvoip-web-sdk`. Este repo cobre o consumo server-side da API.
 
 ## Documentacao oficial
 
