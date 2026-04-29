@@ -1,0 +1,14 @@
+{
+  "name": "nvoip/nvoip-php",
+  "description": "Cliente PHP simples para a API v2 da Nvoip.",
+  "type": "library",
+  "autoload": {
+    "psr-4": {
+      "Nvoip\\": "src/"
+    }
+  },
+  "require": {
+    "php": ">=8.0",
+    "ext-curl": "*"
+  }
+}
