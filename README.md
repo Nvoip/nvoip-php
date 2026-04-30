@@ -15,6 +15,12 @@ SDK e exemplos oficiais da [Nvoip](https://www.nvoip.com.br/) para integrar a AP
 - PHP 8.0+
 - extensao `curl`
 
+## Instalacao
+
+```bash
+composer require nvoip/nvoip-php
+```
+
 ## Configuracao
 
 No painel da Nvoip, em `API`, voce encontra:

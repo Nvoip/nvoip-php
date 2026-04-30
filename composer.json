@@ -1,7 +1,29 @@
 {
   "name": "nvoip/nvoip-php",
-  "description": "Cliente PHP simples para a API v2 da Nvoip.",
+  "description": "SDK PHP oficial para integrar OAuth, chamadas, OTP, WhatsApp, SMS e saldo com a API v2 da Nvoip.",
   "type": "library",
+  "license": "GPL-3.0-only",
+  "homepage": "https://www.nvoip.com.br/",
+  "keywords": [
+    "nvoip",
+    "voip",
+    "telefonia",
+    "sms",
+    "whatsapp",
+    "otp",
+    "api"
+  ],
+  "authors": [
+    {
+      "name": "Nvoip",
+      "homepage": "https://www.nvoip.com.br/"
+    }
+  ],
+  "support": {
+    "docs": "https://nvoip.docs.apiary.io/",
+    "issues": "https://github.com/Nvoip/nvoip-php/issues",
+    "source": "https://github.com/Nvoip/nvoip-php"
+  },
   "autoload": {
     "psr-4": {
       "Nvoip\\": "src/"

@@ -1,0 +1,21 @@
+name: Sync Packagist
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  packagist:
+    name: Trigger Packagist update
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update package metadata
+        run: |
+          curl -fsS -X POST \
+            -H "content-type: application/json" \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_API_TOKEN}" \
+            -d '{"repository":{"url":"https://github.com/Nvoip/nvoip-php"}}'
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
