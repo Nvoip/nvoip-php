@@ -46,6 +46,14 @@ export NVOIP_OAUTH_CLIENT_SECRET="seu_client_secret"
 - `php examples/list-whatsapp-templates.php`
 - `php examples/send-whatsapp-template.php`
 
+### Destinatário WhatsApp
+
+O exemplo mantém `NVOIP_WA_DESTINATION` para telefone. Para o contrato tipado,
+use `NVOIP_WA_RECIPIENT_TYPE=phone|bsuid|parent_bsuid` e
+`NVOIP_WA_RECIPIENT_VALUE`, sem `destination`. BSUID é opaco; não use
+`@username` nem o coloque em campo de telefone. Exemplos mascarados:
+`US.MASKED_BSUID_001` e `PARENT.MASKED_BSUID_001`.
+
 ## Mini endpoint HTTP
 
 O arquivo `Scripts/sender-sms.php` mantem a ideia do script legado, mas ja usando OAuth da API v2.
