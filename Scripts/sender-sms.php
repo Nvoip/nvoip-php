@@ -6,20 +6,18 @@ require __DIR__ . '/../src/NvoipClient.php';
 
 use Nvoip\NvoipClient;
 
-$numbersip = $_GET['numbersip'] ?? getenv('NVOIP_NUMBERSIP') ?: '';
-$userToken = $_GET['user_token'] ?? getenv('NVOIP_USER_TOKEN') ?: '';
 $numberPhone = $_GET['numberPhone'] ?? $_GET['celular'] ?? '';
 $message = $_GET['message'] ?? $_GET['msg'] ?? '';
-$oauthClientId = $_GET['oauth_client_id'] ?? getenv('NVOIP_OAUTH_CLIENT_ID') ?: null;
-$oauthClientSecret = $_GET['oauth_client_secret'] ?? getenv('NVOIP_OAUTH_CLIENT_SECRET') ?: null;
+$oauthClientId = getenv('NVOIP_OAUTH_CLIENT_ID') ?: null;
+$oauthClientSecret = getenv('NVOIP_OAUTH_CLIENT_SECRET') ?: null;
 
-if ($numbersip === '' || $userToken === '' || $numberPhone === '' || $message === '') {
+if ($oauthClientId === null || $oauthClientSecret === null || $numberPhone === '' || $message === '') {
     http_response_code(400);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(
         [
             'error' => 'Missing required parameters.',
-            'required' => ['numbersip', 'user_token', 'numberPhone', 'message'],
+            'required' => ['NVOIP_OAUTH_CLIENT_ID', 'NVOIP_OAUTH_CLIENT_SECRET', 'numberPhone', 'message'],
         ],
         JSON_UNESCAPED_UNICODE
     );
@@ -27,11 +25,11 @@ if ($numbersip === '' || $userToken === '' || $numberPhone === '' || $message ==
 }
 
 $client = new NvoipClient(
-    getenv('NVOIP_BASE_URL') ?: 'https://api.nvoip.com.br/v2',
+    getenv('NVOIP_BASE_URL') ?: 'https://api.nvoip.com.br/v3',
     $oauthClientId,
     $oauthClientSecret
 );
-$oauth = $client->createAccessToken($numbersip, $userToken);
+$oauth = $client->createClientCredentialsToken();
 $response = $client->sendSms($numberPhone, $message, false, $oauth['access_token'] ?? '');
 
 header('Content-Type: application/json; charset=utf-8');

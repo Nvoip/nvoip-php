@@ -7,14 +7,14 @@ require __DIR__ . '/../src/NvoipClient.php';
 use Nvoip\NvoipClient;
 
 $client = new NvoipClient(
-    getenv('NVOIP_BASE_URL') ?: 'https://api.nvoip.com.br/v2',
+    getenv('NVOIP_BASE_URL') ?: 'https://api.nvoip.com.br/v3',
     getenv('NVOIP_OAUTH_CLIENT_ID') ?: null,
     getenv('NVOIP_OAUTH_CLIENT_SECRET') ?: null
 );
 
-$oauth = $client->createAccessToken(
-    getenv('NVOIP_NUMBERSIP') ?: '',
-    getenv('NVOIP_USER_TOKEN') ?: ''
+$oauth = $client->createClientCredentialsToken(
+    getenv('NVOIP_OAUTH_CLIENT_ID') ?: '',
+    getenv('NVOIP_OAUTH_CLIENT_SECRET') ?: ''
 );
 
 $payload = [
