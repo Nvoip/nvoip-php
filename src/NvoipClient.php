@@ -11,7 +11,8 @@ final class NvoipClient
     public function __construct(
         private readonly string $baseUrl = 'https://api.nvoip.com.br/v3',
         private readonly ?string $oauthClientId = null,
-        private readonly ?string $oauthClientSecret = null
+        private readonly ?string $oauthClientSecret = null,
+        private readonly string $tokenUrl = 'https://api.nvoip.com.br/auth/oauth2/token'
     ) {
     }
 
@@ -24,7 +25,7 @@ final class NvoipClient
     {
         return $this->request(
             'POST',
-            'https://api.nvoip.com.br/auth/oauth2/token',
+            $this->tokenUrl,
             [
                 'Content-Type: application/x-www-form-urlencoded',
                 'Authorization: Basic ' . $this->resolveBasicAuth(),
@@ -41,7 +42,7 @@ final class NvoipClient
     {
         return $this->request(
             'POST',
-            'https://api.nvoip.com.br/auth/oauth2/token',
+            $this->tokenUrl,
             [
                 'Content-Type: application/x-www-form-urlencoded',
                 'Authorization: Basic ' . $this->resolveBasicAuth(),
