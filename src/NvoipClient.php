@@ -17,7 +17,7 @@ final class NvoipClient
 
     public static function encodeBasicAuth(string $clientId, string $clientSecret): string
     {
-        return base64_encode($clientId . ':' . $clientSecret);
+        return base64_encode(rawurlencode($clientId) . ':' . rawurlencode($clientSecret));
     }
 
     public function createClientCredentialsToken(): array
