@@ -17,3 +17,4 @@ jobs:
           php-version: "8.2"
       - run: composer validate --strict
       - run: find src examples Scripts -name '*.php' -print0 | xargs -0 -n1 php -l
+      - run: php tests/client_test.php
