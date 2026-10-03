@@ -1,0 +1,9 @@
+name: traceability
+on: [pull_request]
+jobs:
+  jira:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - run: git log --format=%B origin/${{ github.base_ref }}..HEAD | grep -Eq 'NN-[0-9]+'
