@@ -1,6 +1,6 @@
 {
   "name": "nvoip/nvoip-php",
-  "description": "SDK PHP oficial para integrar OAuth, chamadas, OTP, WhatsApp, SMS e saldo com a API v2 da Nvoip.",
+  "description": "SDK PHP oficial para integrar OAuth, chamadas, OTP, WhatsApp, SMS e saldo com a API v3 da Nvoip.",
   "type": "library",
   "license": "GPL-3.0-only",
   "homepage": "https://www.nvoip.com.br/",

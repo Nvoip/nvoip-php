@@ -9,31 +9,30 @@ use RuntimeException;
 final class NvoipClient
 {
     public function __construct(
-        private readonly string $baseUrl = 'https://api.nvoip.com.br/v2',
+        private readonly string $baseUrl = 'https://api.nvoip.com.br/v3',
         private readonly ?string $oauthClientId = null,
-        private readonly ?string $oauthClientSecret = null
+        private readonly ?string $oauthClientSecret = null,
+        private readonly string $tokenUrl = 'https://api.nvoip.com.br/auth/oauth2/token'
     ) {
     }
 
     public static function encodeBasicAuth(string $clientId, string $clientSecret): string
     {
-        return base64_encode($clientId . ':' . $clientSecret);
+        return base64_encode(rawurlencode($clientId) . ':' . rawurlencode($clientSecret));
     }
 
-    public function createAccessToken(string $numbersip, string $userToken): array
+    public function createClientCredentialsToken(): array
     {
         return $this->request(
             'POST',
-            '/oauth/token',
+            $this->tokenUrl,
             [
                 'Content-Type: application/x-www-form-urlencoded',
                 'Authorization: Basic ' . $this->resolveBasicAuth(),
             ],
             http_build_query(
                 [
-                    'username' => $numbersip,
-                    'password' => $userToken,
-                    'grant_type' => 'password',
+                    'grant_type' => 'client_credentials',
                 ]
             )
         );
@@ -43,7 +42,7 @@ final class NvoipClient
     {
         return $this->request(
             'POST',
-            '/oauth/token',
+            $this->tokenUrl,
             [
                 'Content-Type: application/x-www-form-urlencoded',
                 'Authorization: Basic ' . $this->resolveBasicAuth(),
@@ -71,9 +70,8 @@ final class NvoipClient
     public function sendSms(
         string $numberPhone,
         string $message,
-        bool $flashSms = false,
-        ?string $accessToken = null,
-        ?string $napikey = null
+        string $accessToken,
+        bool $flashSms = false
     ): array {
         return $this->jsonRequest(
             'POST',
@@ -83,8 +81,7 @@ final class NvoipClient
                 'message' => $message,
                 'flashSms' => $flashSms,
             ],
-            $accessToken,
-            $napikey
+            $accessToken
         );
     }
 
@@ -101,36 +98,30 @@ final class NvoipClient
         );
     }
 
-    public function getCall(string $callId, ?string $accessToken = null, ?string $napikey = null): array
+    public function getCall(string $callId, string $accessToken): array
     {
         $path = '/calls?callId=' . rawurlencode($callId);
-        if ($napikey !== null && $napikey !== '') {
-            $path .= '&napikey=' . rawurlencode($napikey);
-        }
 
         return $this->request(
             'GET',
             $path,
-            $accessToken !== null && $accessToken !== ''
-                ? ['Authorization: Bearer ' . $accessToken]
-                : []
+            ['Authorization: Bearer ' . $accessToken]
         );
     }
 
     public function sendOtp(
         array $payload,
-        ?string $accessToken = null,
-        ?string $napikey = null
+        string $accessToken
     ): array {
-        return $this->jsonRequest('POST', '/otp', $payload, $accessToken, $napikey);
+        return $this->jsonRequest('POST', '/otp', $payload, $accessToken);
     }
 
-    public function checkOtp(string $code, string $key): array
+    public function checkOtp(string $code, string $key, string $accessToken): array
     {
         return $this->request(
             'GET',
             '/check/otp?code=' . rawurlencode($code) . '&key=' . rawurlencode($key),
-            []
+            ['Authorization: Bearer ' . $accessToken]
         );
     }
 
@@ -168,18 +159,10 @@ final class NvoipClient
         string $method,
         string $path,
         array $payload,
-        ?string $accessToken = null,
-        ?string $napikey = null
+        string $accessToken
     ): array {
-        if ($napikey !== null && $napikey !== '') {
-            $separator = str_contains($path, '?') ? '&' : '?';
-            $path .= $separator . 'napikey=' . rawurlencode($napikey);
-        }
-
         $headers = ['Content-Type: application/json'];
-        if ($accessToken !== null && $accessToken !== '') {
-            $headers[] = 'Authorization: Bearer ' . $accessToken;
-        }
+        $headers[] = 'Authorization: Bearer ' . $accessToken;
 
         return $this->request($method, $path, $headers, json_encode($payload, JSON_THROW_ON_ERROR));
     }
@@ -198,7 +181,7 @@ final class NvoipClient
         curl_setopt_array(
             $curl,
             [
-                CURLOPT_URL => rtrim($this->baseUrl, '/') . $path,
+                CURLOPT_URL => str_starts_with($path, 'http') ? $path : rtrim($this->baseUrl, '/') . $path,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CUSTOMREQUEST => $method,
                 CURLOPT_HTTPHEADER => $headers,
