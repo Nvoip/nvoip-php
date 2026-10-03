@@ -8,6 +8,8 @@ SDK e exemplos oficiais da [Nvoip](https://www.nvoip.com.br/) para integrar a AP
 
 Esta é uma quebra de compatibilidade: use `createClientCredentialsToken()` e envie o access token RS256 em `Authorization: Bearer`. O SDK usa `https://api.nvoip.com.br/auth/oauth2/token`; não use `napikey`, password grant ou `/v3/oauth/token`. Para SMS de texto livre, valide antes a política e o template aprovado aplicáveis à sua conta.
 
+Os tokens retornados devem ser consumidos somente pelo backend. Não os registre em logs, commits ou mensagens. Em OTP, `methods` é um objeto, por exemplo `['sms' => true]` para `phoneNumber`.
+
 ## O que tem aqui
 
 - `src/NvoipClient.php`: cliente leve para a API v3
@@ -27,13 +29,7 @@ composer require nvoip/nvoip-php
 
 ## Configuracao
 
-No painel da Nvoip, em `API`, voce encontra:
-
-- `numbersip`
-- `user-token`
-- `napikey`
-
-Tambem configure um destes formatos:
+Configure credenciais OAuth client credentials no ambiente do servidor:
 
 ```bash
 export NVOIP_OAUTH_CLIENT_ID="seu_client_id"
@@ -60,12 +56,12 @@ use `NVOIP_WA_RECIPIENT_TYPE=phone|bsuid|parent_bsuid` e
 
 ## Mini endpoint HTTP
 
-O arquivo `Scripts/sender-sms.php` mantem a ideia do script legado, mas ja usando OAuth da API v3.
+O arquivo `Scripts/sender-sms.php` usa OAuth client credentials configurado no ambiente do servidor. Não aceite nem passe credenciais na query string.
 
 Exemplo:
 
 ```text
-https://seusite.exemplo/Scripts/sender-sms.php?numbersip=SEU_NUMBERSIP&user_token=SEU_USER_TOKEN&numberPhone=11999999999&message=Mensagem%20de%20teste
+https://seusite.exemplo/Scripts/sender-sms.php?numberPhone=11999999999&message=Mensagem%20de%20teste
 ```
 
 ## SDK web

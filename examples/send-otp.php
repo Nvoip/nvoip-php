@@ -12,7 +12,7 @@ $oauth = $client->createClientCredentialsToken();
 $response = $client->sendOtp(
     [
         'phoneNumber' => getenv('NVOIP_TARGET_NUMBER') ?: '11999999999',
-        'methods' => ['sms'],
+        'methods' => ['sms' => true],
     ],
     $oauth['access_token'] ?? ''
 );
