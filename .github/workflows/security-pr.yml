@@ -1,0 +1,314 @@
+# NN-5711 — SAST (Semgrep) e análise de dependências (OSV) em todo PR, só sobre o que o PR muda.
+# Modelo padrão da organização Nvoip: manter igual em todos os repositórios.
+# - Roda só em pull_request, em 1 job (o faturamento arredonda por job): em geral 1 minuto em repositório
+#   privado e gratuito em público. Push novo no mesmo PR cancela a execução anterior.
+# - Semgrep examina só os arquivos alterados pelo PR e compara com a base (--baseline-commit): reprova apenas
+#   por achado NOVO de severidade WARNING ou ERROR. O legado do repositório fica para a varredura semanal
+#   (security-weekly.yml), que não bloqueia.
+# - Dependências: só quando o PR altera um manifesto ou lockfile. O OSV-Scanner examina a versão da base e a
+#   do PR; reprova apenas por advisory que não existia na base, com CVSS >= 4,0 (média) ou sem nota.
+#   Manifesto que o scanner não consegue ler no lado do PR reprova (erro do scanner, nunca "0 advisory");
+#   na base, só avisa. Declaração de dependência sem lockfile ao lado (package.json, composer.json,
+#   pyproject.toml, Gemfile, .csproj, build.gradle...) NÃO é analisada: o job avisa e segue verde.
+# - Versões fixas: imagens por digest, regras do Semgrep por commit de semgrep/semgrep-rules (branch release)
+#   e actions por SHA. Sem segredos; token só de leitura. Saída de scanner e nomes de arquivo vão para o log
+#   com os comandos de workflow desligados ou com os caracteres de controle trocados.
+# - Falso positivo: comentário `nosemgrep: <id-da-regra>` na linha, com o motivo; em dependência, entrada com
+#   motivo e validade em `osv-scanner.toml` na raiz. Os dois aparecem no diff e passam pela revisão do PR.
+# - O job se chama "security-pr" para poder virar check obrigatório com o mesmo nome em todos os repositórios.
+name: Security PR
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  SEMGREP_IMAGE: semgrep/semgrep@sha256:529ee8a277ec8adc5b534d7c74eea0a47e9de21d62852b6ba7ac6ba9566845c3 # 1.180.0
+  SEMGREP_RULES_SHA: 5a8a6beafb1a848591f44bdddcb51584474493c4 # semgrep/semgrep-rules, branch release, 11/10/2026
+  OSV_IMAGE: ghcr.io/google/osv-scanner@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa # v2.6.0
+  OSV_MIN_CVSS: "4.0"
+
+jobs:
+  security-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Classify the files changed by the pull request
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          # O checkout padrão de pull_request é o commit de merge: HEAD^1 é a base e HEAD^2 é o head do PR.
+          git rev-parse --verify --quiet 'HEAD^2^{commit}' >/dev/null || { echo "Checkout is not the pull request merge commit"; exit 2; }
+          git diff --name-only --no-renames --diff-filter=ACMR -z 'HEAD^1' HEAD > "$RUNNER_TEMP/changed.z"
+          python3 - <<'PY'
+          import os, re
+          tmp = os.environ["RUNNER_TEMP"]
+          changed = [p for p in open(f"{tmp}/changed.z", "rb").read().decode("utf-8", "surrogateescape").split("\0") if p]
+          def safe(text):
+              # Nome de arquivo vem do PR: sem caractere de controle, uma quebra de linha não vira comando de workflow.
+              return re.sub(r"[\x00-\x1f\x7f]", "?", str(text).encode("utf-8", "replace").decode("utf-8"))
+          def prop(text):
+              return safe(text).replace("%", "%25").replace(":", "%3A").replace(",", "%2C")
+          # Arquivos que o OSV-Scanner v2.6.0 lê na varredura recursiva (conferido um a um).
+          manifest = re.compile(
+              r"(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pom\.xml|gradle\.lockfile"
+              r"|buildscript-gradle\.lockfile|gradle/verification-metadata\.xml|requirements\.txt|poetry\.lock|uv\.lock"
+              r"|Pipfile\.lock|pdm\.lock|pylock\.toml|go\.mod|Gemfile\.lock|composer\.lock|Cargo\.lock|packages\.lock\.json"
+              r"|pubspec\.lock|mix\.lock)$"
+          )
+          # Declarações de dependência que só são analisadas quando há um dos arquivos acima na mesma pasta.
+          declaration = re.compile(
+              r"(^|/)(package\.json|composer\.json|pyproject\.toml|setup\.py|setup\.cfg|Pipfile|Gemfile|[^/]+\.gemspec"
+              r"|[^/]+\.(cs|fs|vb)proj|packages\.config|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|libs\.versions\.toml"
+              r"|Podfile|Package\.swift|Cargo\.toml|pubspec\.yaml|mix\.exs|requirements[^/]*\.(txt|in))$"
+          )
+          skip = re.compile(
+              r"\.(md|txt|rst|png|jpe?g|gif|svg|ico|webp|pdf|csv|tsv|lock|sum|woff2?|ttf|eot|otf|mp3|wav|ogg|mp4|zip|gz|jar|map|snap)$"
+              r"|(^|/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|LICENSE|CODEOWNERS)$",
+              re.I,
+          )
+          def covered(path):
+              folder = os.path.dirname(path)
+              try:
+                  names = os.listdir(folder or ".")
+              except OSError:
+                  return False
+              if any(manifest.search(name) for name in names):
+                  return True
+              return os.path.isfile(os.path.join(folder, "gradle", "verification-metadata.xml"))
+          manifests = [p for p in changed if manifest.search(p)]
+          code = [p for p in changed if not skip.search(p)]
+          # Pacote já instalado e versionado em node_modules responde ao lockfile do projeto, não a um próprio.
+          unlocked = [p for p in changed if declaration.search(p) and not manifest.search(p)
+                      and not re.search(r"(^|/)node_modules/", p) and not covered(p)]
+          with open(f"{tmp}/manifests.z", "w", encoding="utf-8", errors="surrogateescape") as fh:
+              fh.write("\0".join(manifests))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"code={'true' if code else 'false'}\n")
+              fh.write(f"manifests={'true' if manifests else 'false'}\n")
+          print(f"changed={len(changed)} semgrep_candidates={len(code)} manifests={len(manifests)} declarations_without_lockfile={len(unlocked)}")
+          for p in manifests:
+              print("manifest:", safe(p))
+          for p in unlocked:
+              print(f"::warning file={prop(p)}::No lockfile next to {safe(p)}: its dependencies are NOT analysed by this workflow (sem lockfile: dependências não analisadas).")
+          if unlocked:
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+                  fh.write("**Sem lockfile: dependências não analisadas** em " + ", ".join(f"`{safe(p)}`" for p in unlocked[:20]) + "\n")
+          PY
+
+      - name: Semgrep on changed files (new findings only)
+        if: steps.diff.outputs.code == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rules="$RUNNER_TEMP/semgrep-rules"; out="$RUNNER_TEMP/semgrep-out"; mkdir -p "$out"
+          git init -q "$rules"
+          git -C "$rules" fetch -q --depth 1 https://github.com/semgrep/semgrep-rules.git "$SEMGREP_RULES_SHA"
+          git -C "$rules" checkout -q FETCH_HEAD
+          test "$(git -C "$rules" rev-parse HEAD)" = "$SEMGREP_RULES_SHA"
+          # Junta as regras de segurança (pastas .../security/...) num arquivo só: o Semgrep valida cada arquivo de
+          # regra num processo à parte, e é isso que deixa a carga de ~1.300 arquivos lenta. Segredos ficam com o
+          # Gitleaks (secret-scan.yml). O id final é o mesmo do registro do Semgrep (caminho + id).
+          cat > "$out/merge.py" <<'PY'
+          import json, os
+          from ruamel.yaml import YAML  # vem na imagem do Semgrep
+          load = YAML(typ="safe").load
+          root, rules = "/rules", []
+          for base, dirs, names in os.walk(root):
+              # apex fica de fora: o Semgrep CE não analisa essa linguagem (só a versão paga).
+              dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not (base == root and d == "apex"))
+              for name in sorted(names):
+                  rel = os.path.relpath(os.path.join(base, name), root)
+                  if "/security/" not in "/" + rel or rel.startswith("generic/secrets/"):
+                      continue
+                  if not name.endswith((".yaml", ".yml")) or name.endswith((".test.yaml", ".test.yml")):
+                      continue
+                  with open(os.path.join(root, rel), encoding="utf-8") as fh:
+                      doc = load(fh)
+                  prefix = os.path.splitext(rel)[0].replace("/", ".")
+                  for rule in (doc or {}).get("rules") or []:
+                      rule["id"] = prefix + "." + rule["id"]
+                      rules.append(rule)
+          assert len(rules) > 1000, len(rules)
+          with open("/out/rules.json", "w", encoding="utf-8") as fh:
+              json.dump({"rules": rules}, fh)
+          print("Semgrep rules:", len(rules), "security rule(s) from semgrep-rules at the pinned commit")
+          PY
+          semgrep_run=(docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e SEMGREP_SEND_METRICS=off
+            -v "$GITHUB_WORKSPACE:/src" -v "$rules:/rules:ro" -v "$out:/out" --workdir /src "$SEMGREP_IMAGE")
+          "${semgrep_run[@]}" python3 /out/merge.py
+          status=0
+          # A saída do Semgrep traz caminho e trecho do PR: vai para o log com os comandos de workflow desligados.
+          token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          echo "::stop-commands::$token"
+          "${semgrep_run[@]}" semgrep scan --config /out/rules.json --no-rewrite-rule-ids \
+            --baseline-commit "$(git rev-parse 'HEAD^1')" --severity WARNING --severity ERROR --error \
+            --metrics off --disable-version-check --quiet --timeout 30 --max-target-bytes 2000000 --jobs 2 \
+            --json-output /out/semgrep.json || status=$?
+          echo; echo "::$token::"
+          if [ -s "$out/semgrep.json" ]; then
+            python3 - "$out/semgrep.json" <<'PY'
+          import json, re, sys
+          def safe(text):
+              return re.sub(r"[\x00-\x1f\x7f]", "?", str(text).encode("utf-8", "replace").decode("utf-8"))
+          def prop(text):
+              return safe(text).replace("%", "%25").replace(":", "%3A").replace(",", "%2C")
+          data = json.load(open(sys.argv[1]))
+          results = data.get("results") or []
+          errors = [e for e in data.get("errors") or [] if e.get("level") in ("warn", "error")]
+          print(f"Semgrep: {len((data.get('paths') or {}).get('scanned') or [])} changed file(s) scanned, {len(results)} new finding(s), {len(errors)} scanner warning(s).")
+          for item in results:
+              print(f"::error file={prop(item['path'])},line={int(item['start']['line'])}::NEW Semgrep finding {safe(item['check_id'])} ({safe(item['extra'].get('severity'))})")
+          for item in errors[:20]:
+              print(f"::warning::Semgrep could not fully analyse {safe(item.get('path', '?'))}: {safe(item.get('type'))}")
+          PY
+          fi
+          case "$status" in
+            0) echo "Semgrep: no new finding in the files changed by this pull request." ;;
+            1) echo "::error::Semgrep found NEW findings introduced by this pull request (listed above). Fix them, or mark a false positive with 'nosemgrep: <rule-id>' and the reason."; exit 1 ;;
+            *) echo "::error::Semgrep did not complete (exit $status); this is a scanner error, not a finding."; exit "$status" ;;
+          esac
+
+      - name: OSV on changed manifests (new advisories only)
+        # Roda mesmo quando o Semgrep reprova, para o PR receber os dois resultados de uma vez.
+        if: ${{ !cancelled() && steps.diff.outcome == 'success' && steps.diff.outputs.manifests == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/osv"; mkdir -p "$work/head" "$work/base"
+          python3 - <<'PY'
+          import os, subprocess
+          tmp = os.environ["RUNNER_TEMP"]
+          manifests = [p for p in open(f"{tmp}/manifests.z", encoding="utf-8", errors="surrogateescape").read().split("\0") if p]
+          wanted = set(manifests)
+          # pom.xml pode herdar de um pom em diretório acima: leva junto para a resolução ficar igual à do repositório.
+          for p in manifests:
+              if os.path.basename(p) == "pom.xml":
+                  d = os.path.dirname(p)
+                  while d:
+                      d = os.path.dirname(d)
+                      wanted.add(os.path.join(d, "pom.xml") if d else "pom.xml")
+          for p in sorted(wanted):
+              for side, rev in (("head", "HEAD"), ("base", "HEAD^1")):
+                  blob = subprocess.run(["git", "show", f"{rev}:{p}"], capture_output=True)
+                  if blob.returncode != 0:
+                      continue  # o arquivo não existe nesse lado
+                  dest = os.path.join(tmp, "osv", side, p)
+                  os.makedirs(os.path.dirname(dest), exist_ok=True)
+                  with open(dest, "wb") as fh:
+                      fh.write(blob.stdout)
+          PY
+          cfg=()
+          if [ -f osv-scanner.toml ]; then cp osv-scanner.toml "$work/osv-scanner.toml"; cfg=(--config /work/osv-scanner.toml); fi
+          # Base e PR em paralelo: com pom.xml a resolução das dependências transitivas leva cerca de 2 minutos por lado.
+          scan() {
+            : > "$work/$1.log"
+            if [ -z "$(find "$work/$1" -type f -print -quit)" ]; then echo '{"results":[]}' > "$work/$1.json"; return 0; fi
+            docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" "$OSV_IMAGE" \
+              scan source --recursive "${cfg[@]}" --format json --output-file "/work/$1.json" "/work/$1" > "$work/$1.log" 2>&1
+          }
+          scan head & head_pid=$!
+          scan base & base_pid=$!
+          head_status=0; base_status=0
+          wait "$head_pid" || head_status=$?
+          wait "$base_pid" || base_status=$?
+          # O log do scanner traz caminhos do PR: só vai para o log do job com os comandos de workflow desligados.
+          token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          show() { echo "::stop-commands::$token"; cut -c1-400 "$1" | tail -n "$2"; echo; echo "::$token::"; }
+          for side in head base; do
+            if [ "$side" = head ]; then status=$head_status; else status=$base_status; fi
+            # 0 = sem advisory; 1 = com advisory; 128 = nenhum pacote encontrado. O resto é erro do scanner.
+            case "$status" in
+              0|1) ;;
+              128) echo '{"results":[]}' > "$work/$side.json" ;;
+              *) show "$work/$side.log" 30; echo "::error::OSV-Scanner did not complete on the $side side (exit $status); this is a scanner error, not a finding."; exit 2 ;;
+            esac
+          done
+          # Com saída 0, 1 ou 128 o OSV-Scanner pode ter deixado de ler um manifesto (JSON/XML inválido, falha ao
+          # resolver as transitivas do pom.xml): a lista de advisories fica incompleta sem mudar o código de saída.
+          # Duas conferências por lado: nenhuma linha de erro de extração/resolução no log, e todo manifesto alterado
+          # aparece como lido ("Scanned <arquivo> file and found N packages").
+          python3 - <<'PY'
+          import os, re
+          tmp = os.environ["RUNNER_TEMP"]
+          manifests = [p for p in open(f"{tmp}/manifests.z", encoding="utf-8", errors="surrogateescape").read().split("\0") if p]
+          for side in ("head", "base"):
+              text = open(f"{tmp}/osv/{side}.log", encoding="utf-8", errors="surrogateescape").read()
+              problems = [line for line in text.splitlines() if re.match(r"(Error during extraction|failed resolution)", line)]
+              for p in manifests:
+                  if os.path.isfile(os.path.join(tmp, "osv", side, p)) and f"Scanned /work/{side}/{p} file and found " not in text:
+                      problems.append(f"not read by the scanner: {p}")
+              with open(f"{tmp}/osv/{side}.problems", "w", encoding="utf-8", errors="surrogateescape") as fh:
+                  fh.write("".join(line.replace("\r", "?") + "\n" for line in problems))
+          PY
+          if [ -s "$work/base.problems" ]; then
+            show "$work/base.problems" 20
+            echo "::warning::OSV-Scanner could not read every manifest on the base side; advisories already present there may be reported as new."
+          fi
+          if [ -s "$work/head.problems" ]; then
+            show "$work/head.problems" 20
+            echo "::error::OSV-Scanner could not read every changed manifest on the pull request side; this is a scanner error, not a finding (the result is NOT '0 advisories')."; exit 2
+          fi
+          python3 - <<'PY'
+          import json, os, re, sys
+          tmp = os.environ["RUNNER_TEMP"]
+          minimum = float(os.environ["OSV_MIN_CVSS"])
+          def safe(text):
+              return re.sub(r"[\x00-\x1f\x7f]", "?", str(text).encode("utf-8", "replace").decode("utf-8"))
+          def load(side):
+              found = {}
+              root = f"/work/{side}/"
+              for result in json.load(open(f"{tmp}/osv/{side}.json")).get("results") or []:
+                  source = (result.get("source") or {}).get("path", "")
+                  source = source[len(root):] if source.startswith(root) else source
+                  for entry in result.get("packages") or []:
+                      pkg = entry.get("package") or {}
+                      scores = {}
+                      for group in entry.get("groups") or []:
+                          for vid in (group.get("ids") or []) + (group.get("aliases") or []):
+                              scores[vid] = group.get("max_severity") or ""
+                      for vuln in entry.get("vulnerabilities") or []:
+                          ids = [vuln.get("id")] + list(vuln.get("aliases") or [])
+                          key = (pkg.get("ecosystem"), pkg.get("name"))
+                          found.setdefault(key, []).append(
+                              {"ids": [i for i in ids if i], "version": pkg.get("version"), "source": source,
+                               "score": scores.get(vuln.get("id"), "")}
+                          )
+              return found
+          head, base = load("head"), load("base")
+          new, legacy, low = [], 0, 0
+          for key, vulns in sorted(head.items(), key=lambda item: (str(item[0][0]), str(item[0][1]))):
+              known = {i for v in base.get(key, []) for i in v["ids"]}
+              seen = set()
+              for vuln in vulns:
+                  if vuln["ids"][0] in seen:
+                      continue
+                  seen.add(vuln["ids"][0])
+                  if known.intersection(vuln["ids"]):
+                      legacy += 1
+                      continue
+                  try:
+                      score = float(vuln["score"])
+                  except ValueError:
+                      score = None
+                  if score is not None and score < minimum:
+                      low += 1
+                      continue
+                  new.append((key, vuln, score))
+          print(f"OSV: {len(new)} new advisory(ies) at or above CVSS {minimum}; {low} new below the threshold; {legacy} already present in the base (not blocking).")
+          for (ecosystem, name), vuln, score in new:
+              print(f"::error::NEW advisory {safe(vuln['ids'][0])} in {safe(ecosystem)}/{safe(name)}@{safe(vuln['version'])} ({safe(vuln['source'])}), CVSS {score if score is not None else 'not rated'}")
+          sys.exit(1 if new else 0)
+          PY
