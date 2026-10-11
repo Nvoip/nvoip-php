@@ -150,12 +150,16 @@ jobs:
             -v "$GITHUB_WORKSPACE:/src" -v "$rules:/rules:ro" -v "$out:/out" --workdir /src "$SEMGREP_IMAGE")
           "${semgrep_run[@]}" python3 /out/merge.py
           status=0
+          # Fora do PR a regra package-dependencies-check: ela casa toda dependência do package.json declarada com
+          # faixa (^, ~, >=), então subir o piso de uma faixa que já existia contava como achado novo. A versão
+          # instalada é a do lockfile, que o passo do OSV examina; sem lockfile, o job já avisa.
           # A saída do Semgrep traz caminho e trecho do PR: vai para o log com os comandos de workflow desligados.
           token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
           echo "::stop-commands::$token"
           "${semgrep_run[@]}" semgrep scan --config /out/rules.json --no-rewrite-rule-ids \
             --baseline-commit "$(git rev-parse 'HEAD^1')" --severity WARNING --severity ERROR --error \
             --metrics off --disable-version-check --quiet --timeout 30 --max-target-bytes 2000000 --jobs 2 \
+            --exclude-rule json.npm.security.package-dependencies-check.package-dependencies-check \
             --json-output /out/semgrep.json || status=$?
           echo; echo "::$token::"
           if [ -s "$out/semgrep.json" ]; then
