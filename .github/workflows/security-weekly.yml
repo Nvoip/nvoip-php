@@ -5,8 +5,11 @@
 # - Semgrep usa o pacote p/default atual do registro (as regras se atualizam a cada execução, como pede a
 #   VUL-01, regra 4); o OSV-Scanner consulta a base de advisories do dia.
 # - Achado não reprova o job: o resultado vai para o resumo da execução e para o artefato
-#   `security-weekly-report` (regra, arquivo, linha, pacote, versão e advisory; nunca trecho de código).
-#   O job só falha se um scanner não conseguir terminar.
+#   `security-weekly-report`. Em repositório privado o artefato traz regra, arquivo, linha, pacote, versão e
+#   advisory (nunca trecho de código); em repositório público, só as contagens por severidade.
+# - O job falha quando um scanner não termina ou quando o OSV-Scanner não consegue ler um manifesto: nesse
+#   caso o resumo diz que a contagem está incompleta, em vez de mostrar "0 advisory". Declaração de dependência
+#   sem lockfile ao lado aparece como "sem lockfile: dependências não analisadas" (aviso, não reprova).
 # - 1 job por semana: o custo é o tempo da varredura completa, uma vez por semana, mais as execuções manuais.
 name: Security weekly
 
@@ -62,13 +65,22 @@ jobs:
           if [ -f osv-scanner.toml ]; then cfg=(--config /src/osv-scanner.toml); fi
           status=0
           docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$GITHUB_WORKSPACE:/src:ro" -v "$out:/out" "$OSV_IMAGE" \
-            scan source --recursive "${cfg[@]}" --format json --output /out/osv.json /src > "$out/osv.log" 2>&1 || status=$?
+            scan source --recursive --all-packages "${cfg[@]}" --format json --output-file /out/osv.json /src > "$out/osv.log" 2>&1 || status=$?
+          # O log do scanner traz caminhos do repositório: só vai para o log do job com os comandos de workflow desligados.
+          token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          show() { echo "::stop-commands::$token"; cut -c1-400 "$1" | tail -n "$2"; echo; echo "::$token::"; }
           # 0 = sem advisory; 1 = com advisory; 128 = nenhum pacote encontrado. O resto é erro do scanner.
           case "$status" in
             0|1) ;;
             128) echo '{"results":[]}' > "$out/osv.json" ;;
-            *) tail -n 30 "$out/osv.log"; echo "::error::OSV-Scanner did not complete (exit $status)."; exit 2 ;;
+            *) show "$out/osv.log" 30; echo "::error::OSV-Scanner did not complete (exit $status)."; exit 2 ;;
           esac
+          # Manifesto que o scanner não conseguiu ler deixa a contagem incompleta sem mudar o código de saída.
+          grep -E '^(Error during extraction|failed resolution)' "$out/osv.log" > "$out/osv-errors.txt" || true
+          if [ -s "$out/osv-errors.txt" ]; then
+            show "$out/osv-errors.txt" 20
+            echo "::error::OSV-Scanner could not read $(wc -l < "$out/osv-errors.txt" | tr -d ' ') manifest(s): the advisory count is INCOMPLETE."; exit 2
+          fi
 
       - name: Build the report (metadata only)
         if: ${{ !cancelled() }}
@@ -76,11 +88,17 @@ jobs:
         env:
           SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
           OSV_OUTCOME: ${{ steps.osv.outcome }}
+          REPO_PRIVATE: ${{ github.event.repository.private }}
         run: |
           set -euo pipefail
+          git ls-files -z > "$RUNNER_TEMP/report/tracked.z"
           python3 - <<'PY'
-          import collections, datetime, json, os
+          import collections, datetime, json, os, re
           out = os.path.join(os.environ["RUNNER_TEMP"], "report")
+          # Só "true" libera o detalhe: sem a informação, o relatório sai no formato de repositório público.
+          private = os.environ.get("REPO_PRIVATE", "").lower() == "true"
+          def safe(text):
+              return re.sub(r"[\x00-\x1f\x7f|`]", "?", str(text).encode("utf-8", "replace").decode("utf-8"))
           def read(name):
               try:
                   return json.load(open(os.path.join(out, name)))
@@ -92,52 +110,98 @@ jobs:
                "confidence": (r["extra"].get("metadata") or {}).get("confidence"), "cwe": (r["extra"].get("metadata") or {}).get("cwe")}
               for r in semgrep.get("results") or []
           ]
-          advisories = []
+          advisories, sources, packages = [], 0, 0
           for result in osv.get("results") or []:
               source = (result.get("source") or {}).get("path", "").removeprefix("/src/")
+              sources += 1
               for entry in result.get("packages") or []:
+                  packages += 1
                   pkg = entry.get("package") or {}
                   for group in entry.get("groups") or []:
                       ids = group.get("ids") or []
                       advisories.append({"source": source, "ecosystem": pkg.get("ecosystem"), "package": pkg.get("name"),
                                          "version": pkg.get("version"), "advisory": ids[0] if ids else None,
                                          "aliases": group.get("aliases") or [], "cvss": group.get("max_severity") or None})
+          try:
+              unread = [line.strip() for line in open(os.path.join(out, "osv-errors.txt"), encoding="utf-8", errors="replace") if line.strip()]
+          except OSError:
+              unread = []
+          # Declarações de dependência sem manifesto/lockfile legível na mesma pasta: o OSV-Scanner não as analisa.
+          manifest = re.compile(
+              r"(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pom\.xml|gradle\.lockfile"
+              r"|buildscript-gradle\.lockfile|gradle/verification-metadata\.xml|requirements\.txt|poetry\.lock|uv\.lock"
+              r"|Pipfile\.lock|pdm\.lock|pylock\.toml|go\.mod|Gemfile\.lock|composer\.lock|Cargo\.lock|packages\.lock\.json"
+              r"|pubspec\.lock|mix\.lock)$"
+          )
+          declaration = re.compile(
+              r"(^|/)(package\.json|composer\.json|pyproject\.toml|setup\.py|setup\.cfg|Pipfile|Gemfile|[^/]+\.gemspec"
+              r"|[^/]+\.(cs|fs|vb)proj|packages\.config|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|libs\.versions\.toml"
+              r"|Podfile|Package\.swift|Cargo\.toml|pubspec\.yaml|mix\.exs|requirements[^/]*\.(txt|in))$"
+          )
+          tracked = [p for p in open(os.path.join(out, "tracked.z"), "rb").read().decode("utf-8", "replace").split("\0") if p]
+          covered_dirs = {os.path.dirname(p) for p in tracked if manifest.search(p)}
+          covered_dirs |= {os.path.dirname(os.path.dirname(p)) for p in tracked if p.endswith("gradle/verification-metadata.xml")}
+          # Pacote já instalado e versionado em node_modules responde ao lockfile do projeto, não a um próprio.
+          unlocked = sorted(p for p in tracked if declaration.search(p) and not manifest.search(p)
+                            and not re.search(r"(^|/)node_modules/", p) and os.path.dirname(p) not in covered_dirs)
           def band(score):
               try:
                   value = float(score)
               except (TypeError, ValueError):
                   return "sem nota"
               return "crítica" if value >= 9 else "alta" if value >= 7 else "média" if value >= 4 else "baixa"
+          osv_ok = os.environ["OSV_OUTCOME"] == "success"
           report = {
               "repository": os.environ.get("GITHUB_REPOSITORY"), "commit": os.environ.get("GITHUB_SHA"), "ref": os.environ.get("GITHUB_REF"),
               "event": os.environ.get("GITHUB_EVENT_NAME"), "run": os.environ.get("GITHUB_RUN_ID"),
               "generatedAtUTC": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+              "detail": "full (private repository)" if private else "counts only (public repository)",
               "semgrep": {"outcome": os.environ["SEMGREP_OUTCOME"], "version": semgrep.get("version"), "rules": "p/default (registro, versão do dia)",
                           "filesScanned": len((semgrep.get("paths") or {}).get("scanned") or []), "scannerWarnings": len(semgrep.get("errors") or []),
-                          "bySeverity": collections.Counter(f["severity"] for f in findings), "findings": findings},
-              "dependencies": {"outcome": os.environ["OSV_OUTCOME"], "tool": "osv-scanner v2.6.0",
-                               "bySeverity": collections.Counter(band(a["cvss"]) for a in advisories), "advisories": advisories},
+                          "total": len(findings), "bySeverity": collections.Counter(f["severity"] for f in findings)},
+              "dependencies": {"outcome": os.environ["OSV_OUTCOME"], "tool": "osv-scanner v2.6.0", "manifestsRead": sources, "packagesAnalysed": packages,
+                               "manifestsNotRead": len(unread), "declarationsWithoutLockfile": len(unlocked),
+                               "total": len(advisories), "bySeverity": collections.Counter(band(a["cvss"]) for a in advisories)},
           }
+          if private:
+              report["semgrep"]["findings"] = findings
+              report["dependencies"].update(advisories=advisories, manifestsNotReadDetail=unread, declarationsWithoutLockfileDetail=unlocked)
           json.dump(report, open(os.path.join(out, "security-weekly-report.json"), "w"), indent=1, ensure_ascii=False)
+          counts = lambda c: ", ".join(f"{k}: {v}" for k, v in sorted(c.items(), key=lambda i: str(i[0]))) or "nenhum"
           lines = [f"## Varredura semanal de segurança — {report['repository']}", "",
                    f"Commit `{report['commit']}` · {report['generatedAtUTC']} · evento `{report['event']}`", "",
-                   f"**Semgrep** ({report['semgrep']['outcome']}): {len(findings)} achado(s) em {report['semgrep']['filesScanned']} arquivo(s); "
-                   + ", ".join(f"{k}: {v}" for k, v in sorted(report['semgrep']['bySeverity'].items(), key=lambda i: str(i[0]))) , "",
-                   f"**Dependências** ({report['dependencies']['outcome']}): {len(advisories)} advisory(ies); "
-                   + ", ".join(f"{k}: {v}" for k, v in sorted(report['dependencies']['bySeverity'].items())), ""]
-          top = collections.Counter(f["rule"] for f in findings).most_common(10)
-          if top:
-              lines += ["| Regra do Semgrep | Achados |", "|---|---|"] + [f"| `{rule}` | {count} |" for rule, count in top] + [""]
-          worst = sorted((a for a in advisories if band(a["cvss"]) in ("crítica", "alta")), key=lambda a: -float(a["cvss"]))[:15]
-          if worst:
-              lines += ["| Pacote | Versão | Advisory | CVSS | Arquivo |", "|---|---|---|---|---|"]
-              lines += [f"| {a['ecosystem']}/{a['package']} | {a['version']} | {a['advisory']} | {a['cvss']} | `{a['source']}` |" for a in worst] + [""]
-          lines += ["Lista completa no artefato `security-weekly-report`. Tratamento e prazos: VUL-01 (seções 4.2 e 4.3)."]
-          open(os.path.join(out, "security-weekly-summary.md"), "w").write("\n".join(lines) + "\n")
-          open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
-          print("\n".join(lines[:8]))
+                   f"**Semgrep** ({report['semgrep']['outcome']}): {len(findings)} achado(s) em {report['semgrep']['filesScanned']} arquivo(s); {counts(report['semgrep']['bySeverity'])}", ""]
+          if not osv_ok and unread:
+              lines += [f"**Dependências: FALHA.** O OSV-Scanner não conseguiu ler {len(unread)} manifesto(s); a contagem abaixo está INCOMPLETA.", ""]
+          elif not osv_ok:
+              lines += ["**Dependências: FALHA.** O OSV-Scanner não terminou; não há contagem de advisories nesta execução.", ""]
+          if sources == 0 and not unread and osv_ok:
+              lines += ["**Dependências:** nenhum manifesto ou lockfile legível no repositório; nada foi analisado (isto não é \"0 advisory\").", ""]
+          elif osv_ok or unread:
+              lines += [f"**Dependências** ({report['dependencies']['outcome']}): {len(advisories)} advisory(ies) em {packages} pacote(s) de {sources} manifesto(s); {counts(report['dependencies']['bySeverity'])}", ""]
+          if unlocked:
+              shown = ", ".join(f"`{safe(p)}`" for p in unlocked[:15]) + (f" e mais {len(unlocked) - 15}" if len(unlocked) > 15 else "")
+              lines += [f"**Sem lockfile: dependências não analisadas** em {len(unlocked)} arquivo(s) de declaração" + (f": {shown}" if private else "."), ""]
+              print(f"::warning::{len(unlocked)} dependency declaration file(s) without a lockfile: their dependencies were NOT analysed (sem lockfile: dependências não analisadas).")
+          if private:
+              top = collections.Counter(f["rule"] for f in findings).most_common(10)
+              if top:
+                  lines += ["| Regra do Semgrep | Achados |", "|---|---|"] + [f"| `{safe(rule)}` | {count} |" for rule, count in top] + [""]
+              worst = sorted((a for a in advisories if band(a["cvss"]) in ("crítica", "alta")), key=lambda a: -float(a["cvss"]))[:15]
+              if worst:
+                  lines += ["| Pacote | Versão | Advisory | CVSS | Arquivo |", "|---|---|---|---|---|"]
+                  lines += [f"| {safe(a['ecosystem'])}/{safe(a['package'])} | {safe(a['version'])} | {safe(a['advisory'])} | {a['cvss']} | `{safe(a['source'])}` |" for a in worst] + [""]
+              if unread:
+                  lines += ["Manifestos não lidos:", ""] + [f"- `{safe(line)[:300]}`" for line in unread[:20]] + [""]
+              lines += ["Lista completa no artefato `security-weekly-report`. Tratamento e prazos: VUL-01 (seções 4.2 e 4.3)."]
+          else:
+              lines += ["Repositório público: o resumo e o artefato trazem só contagens. Para o detalhe, rodar os scanners em cópia local."]
+          open(os.path.join(out, "security-weekly-summary.md"), "w", encoding="utf-8").write("\n".join(lines) + "\n")
+          open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("\n".join(lines) + "\n")
+          print("\n".join(line for line in lines[:12] if line.startswith("**")))
           PY
-          rm -f "$RUNNER_TEMP/report/semgrep.json" "$RUNNER_TEMP/report/osv.json" "$RUNNER_TEMP/report/osv.log"
+          rm -f "$RUNNER_TEMP/report/semgrep.json" "$RUNNER_TEMP/report/osv.json" "$RUNNER_TEMP/report/osv.log" \
+            "$RUNNER_TEMP/report/osv-errors.txt" "$RUNNER_TEMP/report/tracked.z"
 
       - name: Upload the report
         if: ${{ !cancelled() }}
